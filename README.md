@@ -24,6 +24,6 @@ cmake -B build_release -DCMAKE_BUILD_TYPE=Release .
 cmake --build build_release --config Release
 ```
 
-## Building
+## Running
 
 Open `USDViewer.sln` in the corresponding build folder, select configuration (`Debug`/`Release`) and run.

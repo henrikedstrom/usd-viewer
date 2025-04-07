@@ -147,6 +147,9 @@ void Application::Run()
     }
 
     std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << "\n";
+    std::cout << "OpenGL Renderer: " << glGetString(GL_RENDERER) << "\n";
+    std::cout << "OpenGL Vendor: " << glGetString(GL_VENDOR) << "\n";
+
 
     m_camera.ResizeViewport(m_width, m_height);
 
