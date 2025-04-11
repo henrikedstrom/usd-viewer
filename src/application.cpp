@@ -3,7 +3,7 @@
 #include <iostream>
 
 // Third-Party Library Headers
-#include <GLAD/glad.h>
+#include <glad/glad.h>
 
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
@@ -14,12 +14,21 @@
 // Static Application Instance
 Application *Application::s_instance = nullptr;
 
-
 //----------------------------------------------------------------------
 // Internal Utility Functions
 
 namespace
 {
+
+#define CHECK_GL_ERROR(line)                                                                                           \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        GLenum error = glGetError();                                                                                   \
+        if (error != GL_NO_ERROR)                                                                                      \
+        {                                                                                                              \
+            std::cerr << "OpenGL error at line " << line << ": " << error << std::endl;                                \
+        }                                                                                                              \
+    } while (0)
 
 void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 {
@@ -71,6 +80,10 @@ void ComputeSceneBounds(const pxr::UsdStageRefPtr &stage, glm::vec3 &minBounds, 
     pxr::GfRange3d range = bbox.GetRange();
     minBounds = glm::vec3(range.GetMin()[0], range.GetMin()[1], range.GetMin()[2]);
     maxBounds = glm::vec3(range.GetMax()[0], range.GetMax()[1], range.GetMax()[2]);
+
+    // Print the bounds
+    std::cout << "Scene Bounds: " << minBounds.x << ", " << minBounds.y << ", " << minBounds.z << " to " << maxBounds.x
+              << ", " << maxBounds.y << ", " << maxBounds.z << std::endl;
 }
 
 pxr::GfMatrix4d ToGfMatrix(const glm::mat4 &m)
@@ -133,9 +146,16 @@ void Application::Run()
         return;
     }
 
+#if defined(__APPLE__)
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#endif
+
     // Create a windowed mode window and its OpenGL context
     m_window = glfwCreateWindow(m_width, m_height, "USD Viewer", nullptr, nullptr);
-    
+
     // Make the window's context current
     glfwMakeContextCurrent(m_window);
 
@@ -146,10 +166,16 @@ void Application::Run()
         return;
     }
 
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+
+    CHECK_GL_ERROR(__LINE__);
+
     std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << "\n";
     std::cout << "OpenGL Renderer: " << glGetString(GL_RENDERER) << "\n";
     std::cout << "OpenGL Vendor: " << glGetString(GL_VENDOR) << "\n";
-
 
     m_camera.ResizeViewport(m_width, m_height);
 
@@ -162,17 +188,22 @@ void Application::Run()
 
     // Setup file drop callback
     glfwSetDropCallback(m_window, [](GLFWwindow *window, int count, const char **paths) {
-        if (count > 0) {
+        if (count > 0)
+        {
             Application::GetInstance()->OnFileDropped(paths[0]);
         }
     });
 
-    // Create the renderer
+    // Initialize the renderer and HgiInterop
     m_renderer = std::make_unique<pxr::UsdImagingGLEngine>();
+    m_hgiInterop = std::make_unique<pxr::HgiInterop>();
+
+    pxr::TfToken apiName = m_renderer->GetHgi()->GetAPIName();
+    std::cout << "Storm Hgi Backend: " << apiName << "\n";
 
     // Load the default scene
     LoadScene("assets/Kitchen_set/Kitchen_set.usd");
-    
+
     // Enter the main loop
     MainLoop();
 }
@@ -214,19 +245,29 @@ void Application::MainLoop()
 
     // Destroy the renderer and flush the GL pipeline
     m_renderer.reset();
+    m_hgiInterop.reset();
     glFinish();
+
+    // Destroy the window and terminate GLFW
+    glfwDestroyWindow(m_window);
+    m_window = nullptr;
 }
 
 void Application::ProcessFrame()
 {
+    CHECK_GL_ERROR(__LINE__);
+
     // Update camera
     pxr::GfMatrix4d viewMatrix = ToGfMatrix(m_camera.GetViewMatrix());
     pxr::GfMatrix4d projMatrix = ToGfMatrix(m_camera.GetProjectionMatrix());
     m_renderer->SetCameraState(viewMatrix, projMatrix);
 
-    // Set the viewport
+    // Update viewport and render buffer size
     glViewport(0, 0, m_width, m_height);
     m_renderer->SetRenderViewport(pxr::GfVec4d(0, 0, m_width, m_height));
+    m_renderer->SetRenderBufferSize(pxr::GfVec2i(m_width, m_height));
+    m_renderer->SetWindowPolicy(pxr::CameraUtilConformWindowPolicy::CameraUtilFit);
+    m_renderer->SetRendererAov(pxr::HdAovTokens->color);
 
     // Clear the screen
     const float r = 85 / 255.0f;
@@ -235,18 +276,36 @@ void Application::ProcessFrame()
     glClearColor(r, g, b, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    CHECK_GL_ERROR(__LINE__);
+
     // Init render params
     pxr::UsdImagingGLRenderParams renderParams{};
-    renderParams.drawMode = pxr::UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
+    renderParams.drawMode = pxr::UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH;
     renderParams.enableLighting = true;
     renderParams.frame = 0;
     renderParams.complexity = 1;
     renderParams.cullStyle = pxr::UsdImagingGLCullStyle::CULL_STYLE_BACK_UNLESS_DOUBLE_SIDED;
     renderParams.enableSceneMaterials = false;
     renderParams.highlight = true;
+    renderParams.clearColor = pxr::GfVec4f(r, g, b, 1.0f);
 
     // Render the scene
     m_renderer->Render(m_stage->GetPseudoRoot(), renderParams);
+
+    // Get the color AOV texture and transfer it to OpenGL back buffer
+    pxr::HgiTextureHandle aovTexture = m_renderer->GetAovTexture(pxr::HdAovTokens->color);
+    if (aovTexture)
+    {
+        uint32_t framebuffer = 0;
+        m_hgiInterop->TransferToApp(m_renderer->GetHgi(), aovTexture,
+                                    /*srcDepth*/ pxr::HgiTextureHandle(), pxr::HgiTokens->OpenGL,
+                                    pxr::VtValue(framebuffer), pxr::GfVec4i(0, 0, m_width, m_height));
+        CHECK_GL_ERROR(__LINE__);
+    }
+    else
+    {
+        std::cerr << "Failed to get AOV texture." << std::endl;
+    }
 
     // Swap front and back buffers
     glfwSwapBuffers(m_window);
@@ -301,6 +360,8 @@ void Application::LoadScene(const std::string &filename)
     // Reset renderer
     m_renderer.reset();
     m_renderer = std::make_unique<pxr::UsdImagingGLEngine>();
+    m_hgiInterop.reset();
+    m_hgiInterop = std::make_unique<pxr::HgiInterop>();
 
     // Setup lighting
     SetupLighting();
