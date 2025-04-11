@@ -41,22 +41,30 @@ FetchContent_MakeAvailable(glfw)
 # ------------------------------------------------------------------------------
 include(ExternalProject)
 
-# Set the USD build variant and installation directory based on generator type.
-if(CMAKE_CONFIGURATION_TYPES)
-  # For multi-configuration generators (Xcode, Visual Studio)
-  option(USD_DEFAULT_BUILD_VARIANT "Default build variant for OpenUSD in multi-config generators (debug or release)" "release")
-  set(USD_BUILD_VARIANT ${USD_DEFAULT_BUILD_VARIANT})
-  if(USD_BUILD_VARIANT STREQUAL "debug")
-    set(USD_INSTALL_DIR ${CMAKE_BINARY_DIR}/OpenUSD_Install_Debug)
-  else()
-    set(USD_INSTALL_DIR ${CMAKE_BINARY_DIR}/OpenUSD_Install_Release)
-  endif()
-else()
-  # Single-configuration generators: use CMAKE_BUILD_TYPE.
+# Determine USD build variant and install directory
+# If the user passed -DCMAKE_BUILD_TYPE (even on multi-config generators),
+# use that value; otherwise, fall back to the USD_DEFAULT_BUILD_VARIANT option.
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+  message(STATUS "Using CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
   if(CMAKE_BUILD_TYPE MATCHES Debug)
     set(USD_BUILD_VARIANT "debug")
     set(USD_INSTALL_DIR ${CMAKE_BINARY_DIR}/OpenUSD_Install_Debug)
   else()
+    set(USD_BUILD_VARIANT "release")
+    set(USD_INSTALL_DIR ${CMAKE_BINARY_DIR}/OpenUSD_Install_Release)
+  endif()
+else()
+  if(CMAKE_CONFIGURATION_TYPES)
+    option(USD_DEFAULT_BUILD_VARIANT "Default build variant for OpenUSD in multi-config generators (debug or release)" "release")
+    set(USD_BUILD_VARIANT ${USD_DEFAULT_BUILD_VARIANT})
+    message(STATUS "Using USD_DEFAULT_BUILD_VARIANT: ${USD_BUILD_VARIANT}")
+    if(USD_BUILD_VARIANT STREQUAL "debug")
+      set(USD_INSTALL_DIR ${CMAKE_BINARY_DIR}/OpenUSD_Install_Debug)
+    else()
+      set(USD_INSTALL_DIR ${CMAKE_BINARY_DIR}/OpenUSD_Install_Release)
+    endif()
+  else()
+    # Fallback for single-config with no CMAKE_BUILD_TYPE.
     set(USD_BUILD_VARIANT "release")
     set(USD_INSTALL_DIR ${CMAKE_BINARY_DIR}/OpenUSD_Install_Release)
   endif()
@@ -126,6 +134,7 @@ target_link_directories(${PROJECT_NAME} PRIVATE "${USD_ROOT}/lib")
 # ------------------------------------------------------------------------------
 # Library Linking Setup: USD and Dependencies
 # ------------------------------------------------------------------------------
+
 # Determine platform-specific library prefix and suffix.
 if(WIN32)
   set(LIB_PREFIX "")
@@ -135,31 +144,8 @@ else()  # APPLE (macOS)
   set(LIB_SUFFIX ".dylib")
 endif()
 
-# Define a list of USD library base names. Separate lists for Windows and macOS to account
-# for naming differences (e.g., oneTBB on Windows vs. on macOS).
-if(WIN32)
-  set(USD_BASE_LIBS
-    "usd_usd"
-    "usd_sdf"
-    "usd_tf"
-    "usd_vt"
-    "usd_gf"
-    "usd_hd"
-    "usd_hgi"
-    "usd_usdGeom"
-    "usd_usdImaging"
-    "usd_hdSt"
-    "usd_usdImagingGL"
-    "usd_glf"
-    "usd_work"
-    "tbb"
-    "tbbmalloc"
-    "tbbmalloc_proxy"
-    "tbb12"
-  )
-  set(TBB_LIBS "tbb12")
-else()  # macOS
-  set(USD_BASE_LIBS
+# USD libraries common to all platforms.
+set(COMMON_USD_LIBS
     "usd_usd"
     "usd_sdf"
     "usd_tf"
@@ -174,28 +160,30 @@ else()  # macOS
     "usd_hgiInterop"
     "usd_glf"
     "usd_work"
-    "tbb"
-    "tbbmalloc"
-    "tbbmalloc_proxy"
-  )
-  # On macOS Debug builds, append "_debug" to all TBB-related libraries.
+)
+
+# Define platform-specific TBB library names.
+if(WIN32)
+  set(TBB_LIBS "tbb" "tbbmalloc" "tbbmalloc_proxy" "tbb12")
+else()  # macOS
   set(TBB_LIBS "tbb" "tbbmalloc" "tbbmalloc_proxy")
 endif()
+
+# Combine the lists.
+set(USD_BASE_LIBS ${COMMON_USD_LIBS} ${TBB_LIBS})
+
+# For TBB libraries, in Debug mode append the '_debug' suffix.
+set(TBB_DEBUG_LIBS ${TBB_LIBS})
 
 # Build the full paths for USD libraries.
 set(USD_LIBS_COMMON "")
 foreach(lib ${USD_BASE_LIBS})
   set(current_lib_name ${lib})
-  if(WIN32)
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND "${lib}" STREQUAL "tbb12")
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    # If this library is one of the TBB libraries, append _debug.
+    list(FIND TBB_DEBUG_LIBS ${lib} index)
+    if(NOT index EQUAL -1)
       set(current_lib_name "${lib}_debug")
-    endif()
-  elseif(APPLE)
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-      list(FIND TBB_LIBS ${lib} isTBB)
-      if(NOT isTBB EQUAL -1)
-        set(current_lib_name "${lib}_debug")
-      endif()
     endif()
   endif()
   list(APPEND USD_LIBS_COMMON "${USD_ROOT}/lib/${LIB_PREFIX}${current_lib_name}${LIB_SUFFIX}")
@@ -208,6 +196,7 @@ if(APPLE)
   set_target_properties(${PROJECT_NAME} PROPERTIES INSTALL_RPATH "${USD_ROOT}/lib")
 endif()
 
+# Link USD libraries to the target.
 target_link_libraries(${PROJECT_NAME} PRIVATE ${USD_LIBS})
 
 # ------------------------------------------------------------------------------
