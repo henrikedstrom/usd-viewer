@@ -59,4 +59,5 @@ class Application
     // USD Stage and Renderer
     pxr::UsdStageRefPtr m_stage;
     std::unique_ptr<pxr::UsdImagingGLEngine> m_renderer;
+    std::unique_ptr<pxr::HgiInterop> m_hgiInterop;
 };
