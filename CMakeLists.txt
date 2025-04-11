@@ -164,7 +164,11 @@ set(COMMON_USD_LIBS
 
 # Define platform-specific TBB library names.
 if(WIN32)
-  set(TBB_LIBS "tbb" "tbbmalloc" "tbbmalloc_proxy" "tbb12")
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")  ## Windows ARM64
+    set(TBB_LIBS "tbb" "tbbmalloc" "tbb12")
+  else()  # Windows x64
+    set(TBB_LIBS "tbb" "tbbmalloc" "tbbmalloc_proxy" "tbb12")
+  endif()
 else()  # macOS
   set(TBB_LIBS "tbb" "tbbmalloc" "tbbmalloc_proxy")
 endif()
