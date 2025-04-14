@@ -47,8 +47,10 @@ class Application
     static Application *s_instance;
 
     // App Variables
-    uint32_t m_width;
-    uint32_t m_height;
+    uint32_t m_windowWidth;
+    uint32_t m_windowHeight;
+    uint32_t m_framebufferWidth = 0;
+    uint32_t m_framebufferHeight = 0;
     bool m_quitApp = false;
 
     // Window and Camera Controls

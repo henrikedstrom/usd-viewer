@@ -123,7 +123,7 @@ Application *Application::GetInstance()
     return s_instance;
 }
 
-Application::Application(uint32_t width, uint32_t height) : m_width(width), m_height(height)
+Application::Application(uint32_t width, uint32_t height) : m_windowWidth(width), m_windowHeight(height)
 {
     assert(!s_instance); // Ensure only one instance exists
     s_instance = this;
@@ -154,8 +154,14 @@ void Application::Run()
 #endif
 
     // Create a windowed mode window and its OpenGL context
-    m_window = glfwCreateWindow(m_width, m_height, "USD Viewer", nullptr, nullptr);
-
+    m_window = glfwCreateWindow(m_windowWidth, m_windowHeight, "USD Viewer", nullptr, nullptr);
+    if (!m_window)
+    {
+        std::cerr << "Failed to create GLFW window" << std::endl;
+        glfwTerminate();
+        return;
+    }
+ 
     // Make the window's context current
     glfwMakeContextCurrent(m_window);
 
@@ -177,12 +183,15 @@ void Application::Run()
     std::cout << "OpenGL Renderer: " << glGetString(GL_RENDERER) << "\n";
     std::cout << "OpenGL Vendor: " << glGetString(GL_VENDOR) << "\n";
 
-    m_camera.ResizeViewport(m_width, m_height);
+    // Handle high-DPI/Retina displays
+    int actualWidth, actualHeight;
+    glfwGetWindowSize(m_window, &actualWidth, &actualHeight);
+    OnResize(actualWidth, actualHeight);
 
     // Setup input callbacks
     m_controls = std::make_unique<OrbitControls>(m_window, &m_camera);
     glfwSetKeyCallback(m_window, KeyCallback);
-    glfwSetFramebufferSizeCallback(m_window, [](GLFWwindow *window, int width, int height) {
+    glfwSetWindowSizeCallback(m_window, [](GLFWwindow *window, int width, int height) {
         Application::GetInstance()->OnResize(width, height);
     });
 
@@ -224,9 +233,15 @@ void Application::OnKeyPressed(int key, int mods)
 
 void Application::OnResize(int width, int height)
 {
-    m_width = width;
-    m_height = height;
+    m_windowWidth = width;
+    m_windowHeight = height;
     m_camera.ResizeViewport(width, height);
+
+    // Framebuffer size - may differ from window size on high-DPI displaysdow size on high-DPI displays
+    int framebufferWidth, framebufferHeight;
+    glfwGetFramebufferSize(m_window, &framebufferWidth, &framebufferHeight);
+    m_framebufferWidth = framebufferWidth;
+    m_framebufferHeight = framebufferHeight;
 }
 
 void Application::OnFileDropped(const std::string &filename, uint8_t *data, int length)
@@ -263,9 +278,9 @@ void Application::ProcessFrame()
     m_renderer->SetCameraState(viewMatrix, projMatrix);
 
     // Update viewport and render buffer size
-    glViewport(0, 0, m_width, m_height);
-    m_renderer->SetRenderViewport(pxr::GfVec4d(0, 0, m_width, m_height));
-    m_renderer->SetRenderBufferSize(pxr::GfVec2i(m_width, m_height));
+    glViewport(0, 0, m_framebufferWidth, m_framebufferHeight);
+    m_renderer->SetRenderViewport(pxr::GfVec4d(0, 0, m_framebufferWidth, m_framebufferHeight));
+    m_renderer->SetRenderBufferSize(pxr::GfVec2i(m_framebufferWidth, m_framebufferHeight));
     m_renderer->SetWindowPolicy(pxr::CameraUtilConformWindowPolicy::CameraUtilFit);
     m_renderer->SetRendererAov(pxr::HdAovTokens->color);
 
@@ -299,7 +314,8 @@ void Application::ProcessFrame()
         uint32_t framebuffer = 0;
         m_hgiInterop->TransferToApp(m_renderer->GetHgi(), aovTexture,
                                     /*srcDepth*/ pxr::HgiTextureHandle(), pxr::HgiTokens->OpenGL,
-                                    pxr::VtValue(framebuffer), pxr::GfVec4i(0, 0, m_width, m_height));
+                                    pxr::VtValue(framebuffer),
+                                    pxr::GfVec4i(0, 0, m_framebufferWidth, m_framebufferHeight));
         CHECK_GL_ERROR(__LINE__);
     }
     else
