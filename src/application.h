@@ -41,7 +41,8 @@ class Application
     void MainLoop();
     void ProcessFrame();
     void LoadScene(const std::string &filename);
-    void SetupLighting();
+    void InitHydra();
+    void SetupDefaultLighting();
 
     // Static Instance
     static Application *s_instance;
@@ -58,8 +59,8 @@ class Application
     Camera m_camera;
     std::unique_ptr<OrbitControls> m_controls;
 
-    // USD Stage and Renderer
+    // USD Stage and Hydra Engine
     pxr::UsdStageRefPtr m_stage;
-    std::unique_ptr<pxr::UsdImagingGLEngine> m_renderer;
+    std::unique_ptr<pxr::UsdImagingGLEngine> m_engine;
     std::unique_ptr<pxr::HgiInterop> m_hgiInterop;
 };
