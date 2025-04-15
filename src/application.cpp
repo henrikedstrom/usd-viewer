@@ -203,12 +203,8 @@ void Application::Run()
         }
     });
 
-    // Initialize the renderer and HgiInterop
-    m_renderer = std::make_unique<pxr::UsdImagingGLEngine>();
-    m_hgiInterop = std::make_unique<pxr::HgiInterop>();
-
-    pxr::TfToken apiName = m_renderer->GetHgi()->GetAPIName();
-    std::cout << "Storm Hgi Backend: " << apiName << "\n";
+    // Initialize GL Context Capabilities
+    pxr::GlfContextCaps::InitInstance();
 
     // Load the default scene
     LoadScene("assets/Kitchen_set/Kitchen_set.usd");
@@ -258,8 +254,8 @@ void Application::MainLoop()
         ProcessFrame();
     }
 
-    // Destroy the renderer and flush the GL pipeline
-    m_renderer.reset();
+    // Destroy Hydra resources flush the GL pipeline
+    m_engine.reset();
     m_hgiInterop.reset();
     glFinish();
 
@@ -270,25 +266,26 @@ void Application::MainLoop()
 
 void Application::ProcessFrame()
 {
-    CHECK_GL_ERROR(__LINE__);
-
+    if (!m_engine)
+    {
+        InitHydra();
+    }
+    
     // Update camera
     pxr::GfMatrix4d viewMatrix = ToGfMatrix(m_camera.GetViewMatrix());
     pxr::GfMatrix4d projMatrix = ToGfMatrix(m_camera.GetProjectionMatrix());
-    m_renderer->SetCameraState(viewMatrix, projMatrix);
+    m_engine->SetCameraState(viewMatrix, projMatrix);
 
     // Update viewport and render buffer size
     glViewport(0, 0, m_framebufferWidth, m_framebufferHeight);
-    m_renderer->SetRenderViewport(pxr::GfVec4d(0, 0, m_framebufferWidth, m_framebufferHeight));
-    m_renderer->SetRenderBufferSize(pxr::GfVec2i(m_framebufferWidth, m_framebufferHeight));
-    m_renderer->SetWindowPolicy(pxr::CameraUtilConformWindowPolicy::CameraUtilFit);
-    m_renderer->SetRendererAov(pxr::HdAovTokens->color);
+    m_engine->SetRenderViewport(pxr::GfVec4d(0, 0, m_framebufferWidth, m_framebufferHeight));
+    m_engine->SetRenderBufferSize(pxr::GfVec2i(m_framebufferWidth, m_framebufferHeight));
+    m_engine->SetWindowPolicy(pxr::CameraUtilConformWindowPolicy::CameraUtilFit);
+    m_engine->SetRendererAov(pxr::HdAovTokens->color);
 
     // Clear the screen
-    const float r = 85 / 255.0f;
-    const float g = 134 / 255.0f;
-    const float b = 165 / 255.0f;
-    glClearColor(r, g, b, 1.0f);
+    pxr::GfVec4f clearColor(85 / 255.0f, 134 / 255.0f, 165 / 255.0f, 1.0f);
+    glClearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     CHECK_GL_ERROR(__LINE__);
@@ -302,17 +299,17 @@ void Application::ProcessFrame()
     renderParams.cullStyle = pxr::UsdImagingGLCullStyle::CULL_STYLE_BACK_UNLESS_DOUBLE_SIDED;
     renderParams.enableSceneMaterials = false;
     renderParams.highlight = true;
-    renderParams.clearColor = pxr::GfVec4f(r, g, b, 1.0f);
+    renderParams.clearColor = clearColor;
 
     // Render the scene
-    m_renderer->Render(m_stage->GetPseudoRoot(), renderParams);
+    m_engine->Render(m_stage->GetPseudoRoot(), renderParams);
 
     // Get the color AOV texture and transfer it to OpenGL back buffer
-    pxr::HgiTextureHandle aovTexture = m_renderer->GetAovTexture(pxr::HdAovTokens->color);
+    pxr::HgiTextureHandle aovTexture = m_engine->GetAovTexture(pxr::HdAovTokens->color);
     if (aovTexture)
     {
         uint32_t framebuffer = 0;
-        m_hgiInterop->TransferToApp(m_renderer->GetHgi(), aovTexture,
+        m_hgiInterop->TransferToApp(m_engine->GetHgi(), aovTexture,
                                     /*srcDepth*/ pxr::HgiTextureHandle(), pxr::HgiTokens->OpenGL,
                                     pxr::VtValue(framebuffer),
                                     pxr::GfVec4i(0, 0, m_framebufferWidth, m_framebufferHeight));
@@ -373,17 +370,25 @@ void Application::LoadScene(const std::string &filename)
     ComputeSceneBounds(m_stage, minBounds, maxBounds);
     m_camera.ResetToModel(minBounds, maxBounds);
 
-    // Reset renderer
-    m_renderer.reset();
-    m_renderer = std::make_unique<pxr::UsdImagingGLEngine>();
+    // Reset Hydra engine and HgiInterop
+    m_engine.reset();
     m_hgiInterop.reset();
-    m_hgiInterop = std::make_unique<pxr::HgiInterop>();
-
-    // Setup lighting
-    SetupLighting();
 }
 
-void Application::SetupLighting()
+void Application::InitHydra()
+{
+    // Initialize Engine and HgiInterop
+    m_engine.reset(new pxr::UsdImagingGLEngine());
+    m_hgiInterop.reset(new pxr::HgiInterop());
+
+    pxr::TfToken apiName = m_engine->GetHgi()->GetAPIName();
+    std::cout << "Using Storm Hgi Backend: " << apiName << "\n";
+
+    // Setup lighting
+    SetupDefaultLighting();
+}
+
+void Application::SetupDefaultLighting()
 {
     // Setup default lighting
 
@@ -432,5 +437,5 @@ void Application::SetupLighting()
     pxr::GfVec4f ambient(pxr::GfVec4f(.1f, .1f, .1f, 1.f));
 
     // Update renderer
-    m_renderer->SetLightingState(lights, material, ambient);
+    m_engine->SetLightingState(lights, material, ambient);
 }

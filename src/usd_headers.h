@@ -22,6 +22,7 @@
 #pragma warning(disable : 4305) // truncation from 'type1' to 'type2'
 #endif
 
+#include <pxr/imaging/glf/contextCaps.h>
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/imaging/hgiGL/hgi.h>
 #include <pxr/imaging/hgiInterop/hgiInterop.h>
