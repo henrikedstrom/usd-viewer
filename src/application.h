@@ -7,6 +7,7 @@
 
 // Project Headers
 #include "camera.h"
+#include "fps_counter.h"
 #include "orbit_controls.h"
 #include "usd_headers.h"
 
@@ -53,6 +54,7 @@ class Application
     uint32_t m_framebufferWidth = 0;
     uint32_t m_framebufferHeight = 0;
     bool m_quitApp = false;
+    FpsCounter m_fpsCounter;
 
     // Window and Camera Controls
     GLFWwindow *m_window = nullptr;
