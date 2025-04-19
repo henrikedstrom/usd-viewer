@@ -165,6 +165,9 @@ void Application::Run()
     // Make the window's context current
     glfwMakeContextCurrent(m_window);
 
+    // Disable V-Sync
+    glfwSwapInterval(0);
+
     // Initialize GLAD
     if (!gladLoadGL())
     {
@@ -252,6 +255,8 @@ void Application::MainLoop()
         glfwPollEvents();
 
         ProcessFrame();
+
+        m_fpsCounter.tick(m_window);
     }
 
     // Destroy Hydra resources flush the GL pipeline

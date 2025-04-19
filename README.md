@@ -4,15 +4,15 @@ A trivial viewer for USD files. By default, it opens the Kitchen Set, but you ca
 
 ## Platforms Supported
 
-- **Windows:** x64 and ARM64
-- **macOS**
+- **Windows:** x64 and arm64
+- **macOS** arm64 and x64
 
 ## Requirements
 
 - **CMake:** Tested with version 3.31.6.
 - **Python:** Tested with version 3.13.1 (do _not_ install the optional Python debug libraries, as they may cause issues when building OpenUSD).
-- **Windows:** Visual Studio (2019/2022). Tested with VS2022.
-- **macOS:** Xcode 15 (or later) including command-line tools. Tested with AppleClang 17.0.0.
+- **Windows:** Visual Studio (2019/2022). Tested with VS2022 and VS2019.
+- **macOS:** Xcode 15 (or later) including command-line tools. Tested with AppleClang 16.0.0 and 17.0.0.
 
 ## Building from the Command Line
 
