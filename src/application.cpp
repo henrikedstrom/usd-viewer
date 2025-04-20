@@ -1,5 +1,6 @@
 // Standard Library Headers
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 
 // Third-Party Library Headers
@@ -113,6 +114,26 @@ pxr::GfMatrix4d ExpandTo4x4(const glm::mat3 &m)
     return result;
 }
 
+// Convert one sRGB channel into linear space:
+static float SrgbToLinear(float cs) {
+    if (cs <= 0.04045f) {
+        return cs / 12.92f;
+    } else {
+        return std::pow((cs + 0.055f) / 1.055f, 2.4f);
+    }
+}
+
+// Convert an entire GfVec4f (rgb in [0,1], alpha pass‑through) to linear:
+static pxr::GfVec4f ToLinear(const pxr::GfVec4f &c) {
+    return {
+        SrgbToLinear(c[0]),
+        SrgbToLinear(c[1]),
+        SrgbToLinear(c[2]),
+        c[3]
+    };
+}
+
+
 } // namespace
 
 //----------------------------------------------------------------------
@@ -153,6 +174,9 @@ void Application::Run()
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #endif
 
+    // Tell GLFW to create an sRGB‐capable framebuffer
+    glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE);
+
     // Create a windowed mode window and its OpenGL context
     m_window = glfwCreateWindow(m_windowWidth, m_windowHeight, "USD Viewer", nullptr, nullptr);
     if (!m_window)
@@ -179,6 +203,7 @@ void Application::Run()
     glDepthFunc(GL_LEQUAL);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
+    glEnable(GL_FRAMEBUFFER_SRGB);
 
     CHECK_GL_ERROR(__LINE__);
 
@@ -245,7 +270,25 @@ void Application::OnResize(int width, int height)
 
 void Application::OnFileDropped(const std::string &filename, uint8_t *data, int length)
 {
-    LoadScene(filename);
+    // Get the extension in lower‑case
+    auto ext = std::filesystem::path(filename).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+
+    if (ext == ".exr" || ext == ".hdr")
+    {
+        // Reload dome light texture
+        m_domeLightTexture = filename;
+        InitHydra();
+    }
+    else if (ext == ".usd" || ext == ".usda" || ext == ".usdc" || ext == ".usdz")
+    {
+        // Load USD scene
+        LoadScene(filename);
+    }
+    else
+    {
+        std::cerr << "Unsupported file type: " << filename << std::endl;
+    }
 }
 
 void Application::MainLoop()
@@ -270,12 +313,7 @@ void Application::MainLoop()
 }
 
 void Application::ProcessFrame()
-{
-    if (!m_engine)
-    {
-        InitHydra();
-    }
-    
+{ 
     // Update camera
     pxr::GfMatrix4d viewMatrix = ToGfMatrix(m_camera.GetViewMatrix());
     pxr::GfMatrix4d projMatrix = ToGfMatrix(m_camera.GetProjectionMatrix());
@@ -289,7 +327,7 @@ void Application::ProcessFrame()
     m_engine->SetRendererAov(pxr::HdAovTokens->color);
 
     // Clear the screen
-    pxr::GfVec4f clearColor(85 / 255.0f, 134 / 255.0f, 165 / 255.0f, 1.0f);
+    pxr::GfVec4f clearColor(0.09f, 0.24f, 0.43f, 1.0f);
     glClearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -297,13 +335,7 @@ void Application::ProcessFrame()
 
     // Init render params
     pxr::UsdImagingGLRenderParams renderParams{};
-    renderParams.drawMode = pxr::UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH;
-    renderParams.enableLighting = true;
-    renderParams.frame = 0;
-    renderParams.complexity = 1;
     renderParams.cullStyle = pxr::UsdImagingGLCullStyle::CULL_STYLE_BACK_UNLESS_DOUBLE_SIDED;
-    renderParams.enableSceneMaterials = false;
-    renderParams.highlight = true;
     renderParams.clearColor = clearColor;
 
     // Render the scene
@@ -332,43 +364,39 @@ void Application::ProcessFrame()
 void Application::LoadScene(const std::string &filename)
 {
     // Open the stage from disk
-    pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(filename);
-    if (!stage)
+    pxr::UsdStageRefPtr srcStage = pxr::UsdStage::Open(filename);
+    if (!srcStage)
     {
         std::cerr << "Failed to load stage: " << filename << std::endl;
         return;
     }
 
-    // Create a new parent stage in memory
-    pxr::UsdStageRefPtr parentStage = pxr::UsdStage::CreateInMemory();
+    // Create an in‑memory stage
+    pxr::UsdStageRefPtr stage = pxr::UsdStage::CreateInMemory();
 
-    // Check if a rotation is needed based on the stage's up axis
-    bool needsRotation = (pxr::UsdGeomGetStageUpAxis(stage) == pxr::UsdGeomTokens->z);
+    // Define a World root
+    pxr::UsdPrim world = stage->DefinePrim(pxr::SdfPath("/World"), pxr::TfToken("Scope"));
 
-    if (needsRotation)
+    // Under the root, create the Model scope (Xform if needed)
+    pxr::UsdPrim modelPrim;
+    bool needsRot = (pxr::UsdGeomGetStageUpAxis(srcStage) == pxr::UsdGeomTokens->z);
+    if (needsRot)
     {
-        // Define a root Xform to rotate the scene
-        pxr::UsdPrim rootXform = parentStage->DefinePrim(pxr::SdfPath("/World"), pxr::TfToken("Xform"));
-        pxr::UsdGeomXformable xformable(rootXform);
-        pxr::UsdGeomXformOp rotOp = xformable.AddXformOp(pxr::UsdGeomXformOp::TypeTransform,
-                                                         pxr::UsdGeomXformOp::PrecisionDouble, pxr::TfToken(), false);
-        pxr::GfMatrix4d rotMatrix;
-        rotMatrix.SetIdentity();
-        rotMatrix.SetRotate(pxr::GfRotation(pxr::GfVec3d(1, 0, 0), -90.0));
-        rotOp.Set(rotMatrix, pxr::UsdTimeCode::Default());
+        modelPrim = stage->DefinePrim(pxr::SdfPath("/World/Model"), pxr::TfToken("Xform"));
+        pxr::UsdGeomXformable xf(modelPrim);
+        auto rot = xf.AddXformOp(pxr::UsdGeomXformOp::TypeRotateX);
+        rot.Set(-90.0, pxr::UsdTimeCode::Default());
     }
     else
     {
-        // Define a root without any transformation
-        parentStage->DefinePrim(pxr::SdfPath("/World"), pxr::TfToken("Scope"));
+        modelPrim = stage->DefinePrim(pxr::SdfPath("/World/Model"), pxr::TfToken("Scope"));
     }
 
-    // Under the root, define a child prim that references the original stage
-    pxr::UsdPrim childPrim = parentStage->DefinePrim(pxr::SdfPath("/World/ReferencedStage"), pxr::TfToken("Scope"));
-    childPrim.GetReferences().AddReference(filename);
+    // Reference the scene under /World/Model
+    modelPrim.GetReferences().AddReference(filename);
 
     // Use the new stage
-    m_stage = parentStage;
+    m_stage = stage;
 
     // Reset camera position
     glm::vec3 minBounds, maxBounds;
@@ -376,8 +404,7 @@ void Application::LoadScene(const std::string &filename)
     m_camera.ResetToModel(minBounds, maxBounds);
 
     // Reset Hydra engine and HgiInterop
-    m_engine.reset();
-    m_hgiInterop.reset();
+    InitHydra();
 }
 
 void Application::InitHydra()
@@ -386,11 +413,18 @@ void Application::InitHydra()
     m_engine.reset(new pxr::UsdImagingGLEngine());
     m_hgiInterop.reset(new pxr::HgiInterop());
 
-    pxr::TfToken apiName = m_engine->GetHgi()->GetAPIName();
-    std::cout << "Using Storm Hgi Backend: " << apiName << "\n";
+    std::cout << "Renderer plugin: " << m_engine->GetCurrentRendererId() << std::endl;
+    std::cout << "Renderer HGI backend: " << m_engine->GetRendererHgiDisplayName() << std::endl;
 
     // Setup lighting
-    SetupDefaultLighting();
+    if (m_domeLightTexture.empty())
+    {
+        SetupDefaultLighting();
+    }
+    else
+    {
+        SetupDomeLight();
+    }
 }
 
 void Application::SetupDefaultLighting()
@@ -403,9 +437,11 @@ void Application::SetupDefaultLighting()
     {
         pxr::GlfSimpleLight key;
         key.SetPosition(pxr::GfVec4f(800.0f, 200.0f, 800.0f, 1.0f));
-        key.SetDiffuse(0.8f * pxr::GfVec4f(1.0f, 0.95f, 0.9f, 1.0f)); // warm
-        key.SetAmbient(pxr::GfVec4f(0.05f));
-        key.SetSpecular(pxr::GfVec4f(0.8f));
+
+        pxr::GfVec4f warmSRGB{1.0f,0.95f,0.9f,1.0f};
+        key.SetDiffuse(0.8f * ToLinear(warmSRGB));
+        key.SetAmbient(ToLinear({0.05f, 0.05f, 0.05f, 1.0f}));
+        key.SetSpecular(ToLinear({0.8f, 0.8f, 0.8f, 1.0f}));
         key.SetSpotDirection(pxr::GfVec3f(0, 0, -1));
         lights.push_back(key);
     }
@@ -414,9 +450,10 @@ void Application::SetupDefaultLighting()
     {
         pxr::GlfSimpleLight fill;
         fill.SetPosition(pxr::GfVec4f(-600.0f, 100.0f, 900.0f, 1.0f));
-        fill.SetDiffuse(pxr::GfVec4f(0.6f, 0.7f, 1.0f, 1.0f)); // cooler
-        fill.SetAmbient(pxr::GfVec4f(0.05f));
-        fill.SetSpecular(pxr::GfVec4f(0.5f));
+
+        fill.SetDiffuse(ToLinear({0.6f, 0.7f, 1.0f, 1.0f}));
+        fill.SetAmbient(ToLinear({0.05f, 0.05f, 0.05f, 1.0f}));
+        fill.SetSpecular(ToLinear({0.5f, 0.5f, 0.5f, 1.0f}));
         fill.SetSpotDirection(pxr::GfVec3f(0, 0, -1));
         lights.push_back(fill);
     }
@@ -425,22 +462,30 @@ void Application::SetupDefaultLighting()
     {
         pxr::GlfSimpleLight back;
         back.SetPosition(pxr::GfVec4f(0.0f, 300.0f, -400.0f, 1.0f));
-        back.SetDiffuse(pxr::GfVec4f(0.3f, 0.3f, 0.4f, 1.0f));
-        back.SetAmbient(pxr::GfVec4f(0.02f));
-        back.SetSpecular(pxr::GfVec4f(0.3f));
+
+        back.SetDiffuse(ToLinear({0.3f, 0.3f, 0.4f, 1.0f}));
+        back.SetAmbient(ToLinear({0.02f, 0.02f, 0.02f, 1.0f}));
+        back.SetSpecular(ToLinear({0.3f, 0.3f, 0.3f, 1.0f}));
         back.SetSpotDirection(pxr::GfVec3f(0, 0, 1));
         lights.push_back(back);
     }
 
     // Fallback material
     pxr::GlfSimpleMaterial material;
-    material.SetAmbient(pxr::GfVec4f(.1f, .1f, .1f, 1.f));
-    material.SetSpecular(pxr::GfVec4f(.6f, .6f, .6f, .6f));
+    material.SetAmbient(ToLinear({0.1f, 0.1f, 0.1f, 1.0f}));
+    material.SetSpecular(ToLinear({0.6f, 0.6f, 0.6f, 0.6f}));
     material.SetShininess(16.0);
 
     // Ambient light
-    pxr::GfVec4f ambient(pxr::GfVec4f(.1f, .1f, .1f, 1.f));
+    pxr::GfVec4f sceneAmbient = ToLinear({0.1f, 0.1f, 0.1f, 1.0f});
 
     // Update renderer
-    m_engine->SetLightingState(lights, material, ambient);
+    m_engine->SetLightingState(lights, material, sceneAmbient);
+}
+
+void Application::SetupDomeLight()
+{
+    // Setup dome light
+    pxr::UsdLuxDomeLight domeLight = pxr::UsdLuxDomeLight::Define(m_stage, pxr::SdfPath("/World/DomeLight"));
+    domeLight.CreateTextureFileAttr().Set(pxr::SdfAssetPath(m_domeLightTexture));
 }

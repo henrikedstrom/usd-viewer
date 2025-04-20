@@ -44,6 +44,7 @@ class Application
     void LoadScene(const std::string &filename);
     void InitHydra();
     void SetupDefaultLighting();
+    void SetupDomeLight();
 
     // Static Instance
     static Application *s_instance;
@@ -65,4 +66,7 @@ class Application
     pxr::UsdStageRefPtr m_stage;
     std::unique_ptr<pxr::UsdImagingGLEngine> m_engine;
     std::unique_ptr<pxr::HgiInterop> m_hgiInterop;
+
+    // Dome Light
+    std::string m_domeLightTexture = "";
 };

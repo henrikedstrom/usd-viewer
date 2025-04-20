@@ -23,12 +23,14 @@
 #endif
 
 #include <pxr/imaging/glf/contextCaps.h>
+#include <pxr/imaging/hdx/tokens.h>
 #include <pxr/imaging/hgi/hgi.h>
 #include <pxr/imaging/hgiGL/hgi.h>
 #include <pxr/imaging/hgiInterop/hgiInterop.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/metrics.h>
+#include <pxr/usd/usdLux/domeLight.h>
 #include <pxr/usdImaging/usdImagingGL/engine.h>
 
 #if _MSC_VER
