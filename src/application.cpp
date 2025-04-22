@@ -174,9 +174,6 @@ void Application::Run()
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #endif
 
-    // Tell GLFW to create an sRGB‐capable framebuffer
-    glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE);
-
     // Create a windowed mode window and its OpenGL context
     m_window = glfwCreateWindow(m_windowWidth, m_windowHeight, "USD Viewer", nullptr, nullptr);
     if (!m_window)
@@ -203,7 +200,6 @@ void Application::Run()
     glDepthFunc(GL_LEQUAL);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
-    glEnable(GL_FRAMEBUFFER_SRGB);
 
     CHECK_GL_ERROR(__LINE__);
 
@@ -337,6 +333,10 @@ void Application::ProcessFrame()
     pxr::UsdImagingGLRenderParams renderParams{};
     renderParams.cullStyle = pxr::UsdImagingGLCullStyle::CULL_STYLE_BACK_UNLESS_DOUBLE_SIDED;
     renderParams.clearColor = clearColor;
+    renderParams.showProxy = false;
+    renderParams.showRender = true;
+    renderParams.gammaCorrectColors = false;
+    renderParams.colorCorrectionMode = pxr::HdxColorCorrectionTokens->sRGB;
 
     // Render the scene
     m_engine->Render(m_stage->GetPseudoRoot(), renderParams);
